@@ -1,0 +1,143 @@
+<body>
+  <script src="http://evanw.github.io/lightgl.js/lightgl.js"></script>
+  <script>
+    var angle = 0;
+    var gl = GL.create();
+
+    // Create mesh
+    var mesh = new GL.Mesh({ coords: true, triangles: false });
+
+    var simulationSize = 128;
+
+    for(var x = 0; x < simulationSize; x++) {
+      for(var y = 0; y < simulationSize; y++) {
+        mesh.vertices.push([x / simulationSize, y / simulationSize])
+      }
+    }
+
+    mesh.compile();
+
+    // Create textures
+    var texture = new GL.Texture(simulationSize, simulationSize, {
+      magFilter: gl.NEAREST,
+      minFilter: gl.NEAREST,
+      type: gl.FLOAT
+    });
+
+    var textureAlternate = new GL.Texture(simulationSize, simulationSize, {
+      magFilter: gl.NEAREST,
+      minFilter: gl.NEAREST,
+      type: gl.FLOAT
+    });
+
+    // Position shader
+    var positionShader = new GL.Shader(`
+      uniform float simulationSize;
+      varying vec2 coord;
+
+      void main() {
+        vec2 uv = coord / simulationSize;
+        vec4 offset = vec4(-0.5, -0.5, 0.0, -0.5);
+
+        coord = gl_Vertex.xy;
+
+        gl_Position = vec4(coord, 0.0, 1.0) + offset;
+      }
+    `, `
+      varying vec2 coord;
+      uniform sampler2D sampler;
+      uniform vec2 mouse;
+      uniform bool init;
+
+      void main() {
+        vec4 prevPosition = texture2D(sampler, coord);
+
+        float d = distance(coord, mouse);
+
+        vec2 position = prevPosition.xy;
+
+        vec2 displacement = (coord - mouse) / pow(d, 1.8) * 0.01;
+
+        vec2 target = coord + displacement;
+
+        if(init) {
+          position = target;
+        } else {
+          position = prevPosition.xy + ((target - position) * 0.1);
+        }
+
+        gl_FragColor = vec4(position, 1.0, 1.0);
+      }
+    `);
+
+    positionShader.uniforms({
+      simulationSize: simulationSize,
+      mouse: [0.5, 0.5]
+    })
+
+    // Particle shader
+    var particleShader = new GL.Shader(`
+      uniform sampler2D sampler;
+      varying vec2 coord;
+
+      void main() {
+        vec4 offset = vec4(-0.5, -0.5, 0.0, -0.5);
+
+        vec4 position = texture2D(sampler, gl_Vertex.xy);
+
+        coord = position.xy;
+
+        gl_PointSize = 2.0;
+        gl_Position = vec4(position.xy, 0.0, 1.0) + offset;
+      }
+    `, `
+      varying vec2 coord;
+
+      void main() {
+        gl_FragColor = vec4(coord, 1.0, 1.0);
+      }
+    `);
+
+    // Update
+    gl.onupdate = function(seconds) {
+
+    };
+
+    gl.onmousemove = function(e) {
+      positionShader.uniforms({
+        mouse: [e.x / window.innerWidth, 1 - (e.y / window.innerHeight)]
+      })
+    };
+
+    var init = true;
+
+    // Draw
+    gl.ondraw = function() {
+      texture.swapWith(textureAlternate);
+
+      texture.drawTo(function() {
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+        positionShader.uniforms({
+          sampler: init ? 1 : 0,
+          init: init
+        })
+
+        positionShader.draw(mesh, gl.POINTS);
+      })
+
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+      texture.bind(0);
+
+      particleShader.uniforms();
+
+      particleShader.draw(mesh, gl.POINTS);
+
+      init = false;
+    };
+
+    gl.fullscreen();
+    gl.animate();
+  </script>
+</body>

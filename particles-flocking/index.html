@@ -1,0 +1,307 @@
+<body>
+  <script src="http://evanw.github.io/lightgl.js/lightgl.js"></script>
+  <script>
+    var gl = GL.create();
+
+    // Create mesh
+    var mesh = new GL.Mesh({ coords: true, triangles: false });
+
+    var simulationSize = 512;
+
+    for(var x = 0; x < simulationSize; x++) {
+      for(var y = 0; y < simulationSize; y++) {
+        mesh.vertices.push([x / simulationSize, y / simulationSize])
+      }
+    }
+
+    mesh.compile();
+
+    var debugMesh = new GL.Mesh({ coords: true, triangles: false });
+
+    debugMesh.vertices = [
+      [0, 0], [1, 0], [0, 1],
+      [1, 0], [1, 1], [0, 1]
+    ]
+
+    debugMesh.compile();
+
+    // Create textures
+    var texture = new GL.Texture(simulationSize, simulationSize, {
+      magFilter: gl.NEAREST,
+      minFilter: gl.NEAREST,
+      type: gl.FLOAT
+    });
+
+    var textureAlternate = new GL.Texture(simulationSize, simulationSize, {
+      magFilter: gl.NEAREST,
+      minFilter: gl.NEAREST,
+      type: gl.FLOAT
+    });
+
+    var densityTexture = new GL.Texture(simulationSize, simulationSize, {
+      magFilter: gl.NEAREST,
+      minFilter: gl.NEAREST,
+      type: gl.FLOAT
+    });
+
+    // Position shader
+    var simulationShader = new GL.Shader(`
+      uniform float simulationSize;
+      varying vec2 coord;
+
+      void main() {
+        vec2 uv = coord / simulationSize;
+        vec4 offset = vec4(-0.5, -0.5, 0.0, -0.5);
+
+        coord = gl_Vertex.xy;
+
+        gl_Position = vec4(coord, 0.0, 1.0) + offset;
+      }
+    `, `
+      varying vec2 coord;
+      uniform sampler2D sampler;
+      uniform vec2 mouse;
+      uniform bool init;
+      uniform sampler2D densitySampler;
+      uniform float randomSeed;
+
+      const float flockSamples = 12.0;
+
+      const float maxVelocity = 0.005;
+
+      const float PI = 3.1415926535897932384626433832795;
+
+      const vec2 center = vec2(0.5, 0.5);
+
+      float rand(vec2 co){
+        return fract(sin(dot(co.xy ,vec2(12.9898,78.233))) * 43758.5453 + randomSeed);
+      }
+
+      void main() {
+        vec2 position, velocity;
+
+        if(init) {
+          // velocity = vec2((rand(coord + vec2(0.0354, 0.0324)) - vec2(0.5)) * vec2(0.2));
+          velocity = vec2(0.0, 0.0);
+          position = coord;
+        } else {
+          vec4 density = texture2D(densitySampler, coord);
+          vec4 sample = texture2D(sampler, coord);
+          velocity = sample.ba;
+          position = sample.rg;
+
+
+          // Move towards center
+          vec2 centerForce = (center - position) * 0.0005;
+
+          // Move away from mouse
+          float mouseDistance = distance(position, mouse);
+          vec2 mouseDiff = position - mouse;
+          vec2 mouseForce = mouseDiff / pow(mouseDistance, 2.4) * 0.00001;
+
+          // Seperation
+          vec2 separationVector;
+          vec2 cohesionVector;
+          vec2 alignementVector;
+
+          float stepPI = (PI * 2.0) / flockSamples;
+
+          for(float i = 0.0; i < flockSamples; i++) {
+            float angle = i * stepPI;
+
+            vec2 sampleVector = vec2(sin(angle), cos(angle));
+            vec2 separationSampleVector = position + sampleVector * 0.002;
+            vec2 cohesionSampleVector = position + sampleVector * 0.008;
+            vec2 alignementSampleVector = position + sampleVector * 0.004;
+
+            vec4 separationSample = texture2D(densitySampler, separationSampleVector);
+            vec4 cohesionSample = texture2D(densitySampler, cohesionSampleVector);
+            vec4 alignementSample = texture2D(densitySampler, alignementSampleVector);
+
+            separationVector += separationSample.xy * pow(separationSample.b, 1.2);
+            cohesionVector += cohesionSample.xy * cohesionSample.b;
+            alignementVector += alignementSample.xy * alignementSample.b;
+          }
+
+          vec2 separationForce = normalize(position - separationVector / flockSamples) * 0.0008;
+          vec2 cohesionForce = normalize(cohesionVector / flockSamples - position) * 0.0009;
+
+          // Alignement
+          vec2 alignementForce = normalize(alignementVector / flockSamples - position) * 0.0004;
+
+          velocity += separationForce;
+          alignementForce += alignementForce;
+          velocity += cohesionForce;
+          // velocity += mouseForce;
+          velocity += centerForce;
+
+          if(length(velocity) > maxVelocity) {
+            velocity = normalize(velocity) * maxVelocity;
+          }
+
+          // velocity *= 0.95;
+
+          position += velocity;
+        }
+
+        gl_FragColor = vec4(position, velocity);
+      }
+    `);
+
+    simulationShader.uniforms({
+      simulationSize: simulationSize,
+      mouse: [0.5, 0.5]
+    })
+
+    // Density shader
+    var densityShader = new GL.Shader(`
+      uniform sampler2D sampler;
+      varying vec2 position;
+      varying vec2 velocity;
+      varying vec2 coord;
+
+      void main() {
+        vec4 offset = vec4(-0.5, -0.5, 0.0, -0.5);
+
+        vec4 sample = texture2D(sampler, gl_Vertex.xy);
+
+        coord = gl_Vertex.xy;
+
+        position = sample.rg;
+        velocity = sample.ba;
+
+        gl_PointSize = 1.2;
+        gl_Position = vec4(position, 0.0, 1.0) + offset;
+      }
+    `, `
+      varying vec2 position;
+      varying vec2 velocity;
+      varying vec2 coord;
+
+      void main() {
+        vec4 current = vec4(velocity * 100.0, 1.0, 1.0) * vec4(1.0, 1.0, 0.08, 0.08);
+
+        gl_FragColor = current;
+      }
+    `);
+
+    // Particle shader
+    var particleShader = new GL.Shader(`
+      uniform sampler2D sampler;
+      varying vec2 position;
+      varying vec2 velocity;
+
+      void main() {
+        vec4 offset = vec4(-0.5, -0.5, 0.0, -0.5);
+
+        vec4 sample = texture2D(sampler, gl_Vertex.xy);
+
+        position = sample.rg;
+        velocity = sample.ba;
+
+        gl_PointSize = 1.0;
+        gl_Position = vec4(position, 0.0, 1.0) + offset;
+      }
+    `, `
+      varying vec2 velocity;
+
+      void main() {
+        float speed = length(velocity) * 50.0 + 0.4;
+
+        gl_FragColor = vec4(speed, speed, speed, 0.01);
+      }
+    `);
+
+    // Debug shader
+    var debugShader = new GL.Shader(`
+      uniform vec2 offset;
+      uniform vec2 resolution;
+      uniform float simulationSize;
+      varying vec2 coord;
+
+      void main() {
+        vec4 projection = vec4(simulationSize / resolution, 1.0, 1.0);
+        vec4 offset = vec4(-0.5, -0.5, 0.0, -0.5);
+
+        coord = gl_Vertex.xy;
+
+        gl_Position = vec4(coord, 0.0, 1.0) * projection + offset;
+      }
+    `, `
+      uniform sampler2D sampler;
+      varying vec2 coord;
+
+      void main() {
+        gl_FragColor = texture2D(sampler, coord);
+      }
+    `);
+
+    gl.onmousemove = function(e) {
+      simulationShader.uniforms({
+        mouse: [e.x / window.innerWidth, 1 - (e.y / window.innerHeight)]
+      })
+    };
+
+    var init = true;
+
+    // Draw
+    gl.ondraw = function() {
+      texture.swapWith(textureAlternate);
+      gl.disable(gl.BLEND);
+
+      texture.drawTo(function() {
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+        simulationShader.uniforms({
+          densitySampler: 2,
+          sampler: init ? 1 : 0,
+          init: init,
+          randomSeed: Math.random() * 1000
+        })
+
+        simulationShader.draw(mesh, gl.POINTS);
+      })
+
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+      texture.bind(0);
+
+      densityTexture.drawTo(function() {
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+        gl.enable(gl.BLEND);
+        // gl.disable(gl.DEPTH_TEST);
+
+        densityShader.uniforms({
+          simulationSampler: 0
+        })
+
+        densityShader.draw(mesh, gl.POINTS);
+      })
+
+      densityTexture.bind(2);
+
+      gl.disable(gl.BLEND);
+
+      particleShader.uniforms({
+        densitySampler: 2
+      })
+
+      particleShader.draw(mesh, gl.POINTS);
+
+      debugShader.uniforms({
+        sampler: 2,
+        simulationSize: simulationSize,
+        resolution: [window.innerWidth, window.innerHeight]
+      })
+
+      // debugShader.draw(debugMesh, gl.TRIANGLES);
+
+      init = false;
+    };
+
+    gl.fullscreen();
+    gl.animate();
+  </script>
+</body>

@@ -1,0 +1,117 @@
+<script>
+  // Basic webgl example, created based on annotated source:
+  // https://gist.github.com/thomaswilburn/6128987
+
+  var canvas = document.createElement('canvas')
+  var gl = canvas.getContext('webgl')
+
+  function createShader(type, source) {
+    var shader = gl.createShader(type)
+
+    gl.shaderSource(shader, source)
+    gl.compileShader(shader)
+
+    var error = gl.getShaderInfoLog(shader)
+
+    if(error) {
+      console.error('Error compiling shader', error)
+    } else {
+      console.log('Shader compiled successfully')
+    }
+
+    return shader
+  }
+
+  function createVertexShader(source) {
+    return createShader(gl.VERTEX_SHADER, source)
+  }
+
+  function createFragmentShader(source) {
+    return createShader(gl.FRAGMENT_SHADER, source)
+  }
+
+  var vertex = createVertexShader(`
+    attribute vec2 position;
+    varying vec2 v_position;
+
+    void main() {
+      gl_Position = vec4(position, 1, 1);
+      v_position = position;
+    }
+  `)
+
+  var fragment = createFragmentShader(`
+    precision mediump float;
+    varying vec2 v_position;
+
+    void main() {
+      gl_FragColor = vec4(v_position.y * 0.5 + 0.5, 0.0, v_position.x * 0.5 + 0.5, 1);
+    }
+  `)
+
+  var program = gl.createProgram()
+
+  gl.attachShader(program, vertex)
+  gl.attachShader(program, fragment)
+
+  gl.linkProgram(program)
+  gl.useProgram(program)
+
+  var buffer = gl.createBuffer()
+
+  // Two triangles
+  var bufferData = [
+    -1, -1,
+    1, -1,
+    -1, 1,
+
+    1, -1,
+    1, 1,
+    -1, 1
+  ]
+
+  // Bind buffer
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffer)
+
+  // Fill buffer
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(bufferData), gl.STATIC_DRAW)
+
+  // Get id for variable
+  var position = gl.getAttribLocation(program, 'position');
+
+  // Enable variable
+  gl.enableVertexAttribArray(position);
+
+  // Declare variable position in the buffer
+  gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 8, 0);
+
+  function render() {
+    gl.clearColor(0, 0, 0, 1)
+    gl.clear(gl.COLOR_BUFFER_BIT)
+    gl.drawArrays(gl.TRIANGLES, 0, 6)
+  }
+
+  function resize() {
+    canvas.width = window.innerWidth
+    canvas.height = window.innerHeight
+
+    gl.viewport(0, 0, canvas.width, canvas.height)
+
+    render()
+  }
+
+  window.addEventListener('load', function() {
+
+  })
+
+  function load() {
+    document.body.style.margin = '0'
+    document.body.appendChild(canvas)
+
+    resize()
+    render()
+  }
+
+  window.addEventListener('load', load)
+  window.addEventListener('resize', resize)
+</script>

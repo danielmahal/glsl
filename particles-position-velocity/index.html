@@ -1,0 +1,190 @@
+<body>
+  <script src="http://evanw.github.io/lightgl.js/lightgl.js"></script>
+  <script>
+    var gl = GL.create();
+
+    // Create mesh
+    var mesh = new GL.Mesh({ coords: true, triangles: false });
+
+    var simulationSize = 256;
+
+    for(var x = 0; x < simulationSize; x++) {
+      for(var y = 0; y < simulationSize; y++) {
+        mesh.vertices.push([x / simulationSize, y / simulationSize])
+      }
+    }
+
+    mesh.compile();
+
+    var debugMesh = new GL.Mesh({ coords: true, triangles: false });
+
+    debugMesh.vertices = [
+      [0, 0], [1, 0], [0, 1],
+      [1, 0], [1, 1], [0, 1]
+    ]
+
+    debugMesh.compile();
+
+    // Create textures
+    var texture = new GL.Texture(simulationSize, simulationSize, {
+      magFilter: gl.NEAREST,
+      minFilter: gl.NEAREST,
+      type: gl.FLOAT
+    });
+
+    var textureAlternate = new GL.Texture(simulationSize, simulationSize, {
+      magFilter: gl.NEAREST,
+      minFilter: gl.NEAREST,
+      type: gl.FLOAT
+    });
+
+    // Position shader
+    var simulationShader = new GL.Shader(`
+      uniform float simulationSize;
+      varying vec2 coord;
+
+      void main() {
+        vec2 uv = coord / simulationSize;
+        vec4 offset = vec4(-0.5, -0.5, 0.0, -0.5);
+
+        coord = gl_Vertex.xy;
+
+        gl_Position = vec4(coord, 0.0, 1.0) + offset;
+      }
+    `, `
+      varying vec2 coord;
+      uniform sampler2D sampler;
+      uniform vec2 mouse;
+      uniform bool init;
+
+      void main() {
+        vec2 position, velocity;
+        vec2 center = vec2(0.5, 0.5);
+
+        if(init) {
+          velocity = vec2(0.0, 0.0);
+          position = coord;
+        } else {
+          vec4 sample = texture2D(sampler, coord);
+          velocity = sample.ba;
+          position = sample.rg;
+
+          float centerDistance = distance(position, coord);
+          vec2 centerDiff = coord - position;
+          vec2 centerForce = centerDiff * 0.001;
+
+          float mouseDistance = distance(position, mouse);
+          vec2 mouseDiff = position - mouse;
+          vec2 mouseForce = mouseDiff / pow(mouseDistance, 2.4) * 0.00001;
+
+          velocity += mouseForce;
+          velocity += centerForce;
+
+          velocity *= 0.92;
+
+          position += velocity;
+        }
+
+        gl_FragColor = vec4(position, velocity);
+      }
+    `);
+
+    simulationShader.uniforms({
+      simulationSize: simulationSize,
+      mouse: [0.5, 0.5]
+    })
+
+    // Particle shader
+    var particleShader = new GL.Shader(`
+      uniform sampler2D sampler;
+      varying vec2 position;
+      varying vec2 velocity;
+
+      void main() {
+        vec4 offset = vec4(-0.5, -0.5, 0.0, -0.5);
+
+        vec4 sample = texture2D(sampler, gl_Vertex.xy);
+
+        position = sample.rg;
+        velocity = sample.ba;
+
+        gl_PointSize = 2.0;
+        gl_Position = vec4(position, 0.0, 1.0) + offset;
+      }
+    `, `
+      varying vec2 velocity;
+
+      void main() {
+        float speed = length(velocity) * 50.0 + 0.4;
+
+        gl_FragColor = vec4(speed, speed, speed, 1.0);
+      }
+    `);
+
+    // Debug shader
+    var debugShader = new GL.Shader(`
+      uniform vec2 offset;
+      uniform vec2 resolution;
+      uniform float simulationSize;
+      varying vec2 coord;
+
+      void main() {
+        vec4 projection = vec4(simulationSize / resolution, 1.0, 1.0);
+        vec4 offset = vec4(-0.5, -0.5, 0.0, -0.5);
+
+        coord = gl_Vertex.xy;
+
+        gl_Position = vec4(coord, 0.0, 1.0) * projection + offset;
+      }
+    `, `
+      uniform sampler2D sampler;
+      varying vec2 coord;
+
+      void main() {
+        gl_FragColor = texture2D(sampler, coord);
+      }
+    `);
+
+    gl.onmousemove = function(e) {
+      simulationShader.uniforms({
+        mouse: [e.x / window.innerWidth, 1 - (e.y / window.innerHeight)]
+      })
+    };
+
+    var init = true;
+
+    // Draw
+    gl.ondraw = function() {
+      texture.swapWith(textureAlternate);
+
+      texture.drawTo(function() {
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+        simulationShader.uniforms({
+          sampler: init ? 1 : 0,
+          init: init
+        })
+
+        simulationShader.draw(mesh, gl.POINTS);
+      })
+
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+      texture.bind(0);
+
+      particleShader.draw(mesh, gl.POINTS);
+
+      debugShader.uniforms({
+        simulationSize: simulationSize,
+        resolution: [window.innerWidth, window.innerHeight]
+      })
+
+      debugShader.draw(debugMesh, gl.TRIANGLES);
+
+      init = false;
+    };
+
+    gl.fullscreen();
+    gl.animate();
+  </script>
+</body>
